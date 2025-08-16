@@ -101,6 +101,16 @@ export default function Home() {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
+  const getMileCount = (): number => {
+    const totalSeconds = Math.floor(timerState.elapsedTime / 1000);
+    const mileTime = 330; // 5:30 minutes mile time
+    return Math.floor(totalSeconds / mileTime); // How many miles could have been run
+  };
+
+  const shouldShowMileMessage = (): boolean => {
+    return getMileCount() > 0;
+  };
+
   return (
     <main className="min-h-screen p-8 flex flex-col items-center justify-center text-center">
       <h1 className="text-4xl font-bold mb-8 text-gray-800">doomscroll timer</h1>
@@ -112,6 +122,19 @@ export default function Home() {
         <p className="text-gray-600 mb-8">
           {timerState.isRunning ? 'Currently doomscrolling...' : 'Time how long you are doomscrolling for'}
         </p>
+        
+        {shouldShowMileMessage() && (
+          <div className="bg-orange-100 border-l-4 border-orange-500 p-4 mb-6 rounded-r-lg max-w-md mx-auto">
+            <div className="flex items-center">
+              <div className="text-2xl mr-3">🏃‍♂️</div>
+              <div>
+                <p className="text-orange-800 font-semibold text-lg">
+                  You could have run {getMileCount()} {getMileCount() === 1 ? 'mile' : 'miles'}!
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex gap-4">
