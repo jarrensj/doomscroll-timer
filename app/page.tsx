@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useUser } from '@clerk/nextjs';
 
 interface TimerState {
   startTime: number | null;
@@ -8,13 +9,22 @@ interface TimerState {
   isRunning: boolean;
 }
 
+interface DailyStats {
+  date: string;
+  total_time_ms: number;
+}
+
 export default function Home() {
+  const { user, isLoaded } = useUser();
   const [timerState, setTimerState] = useState<TimerState>({
     startTime: null,
     elapsedTime: 0,
     isRunning: false,
   });
+  const [dailyStats, setDailyStats] = useState<DailyStats | null>(null);
+  const [lastSyncTime, setLastSyncTime] = useState<number>(0);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const syncIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Load timer state from localStorage on component mount
   useEffect(() => {
@@ -65,6 +75,78 @@ export default function Home() {
     };
   }, [timerState.isRunning]);
 
+  // Fetch today's daily stats from database
+  const fetchDailyStats = async () => {
+    if (!user) return;
+    
+    try {
+      const response = await fetch('/api/today');
+      if (response.ok) {
+        const data = await response.json();
+        setDailyStats(data);
+      }
+    } catch (error) {
+      console.error('Error fetching daily stats:', error);
+    }
+  };
+
+  // Sync session time to database
+  const syncToDatabase = async (additionalTime: number) => {
+    if (!user || additionalTime <= 0) return;
+    
+    try {
+      const response = await fetch('/api/today', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          additional_time_ms: additionalTime
+        }),
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setDailyStats(data);
+      }
+    } catch (error) {
+      console.error('Error syncing to database:', error);
+    }
+  };
+
+  // Load daily stats when user is loaded
+  useEffect(() => {
+    if (isLoaded && user) {
+      fetchDailyStats();
+    }
+  }, [isLoaded, user]);
+
+  // Periodic sync to database (every 30 seconds when timer is running)
+  useEffect(() => {
+    if (timerState.isRunning && user) {
+      syncIntervalRef.current = setInterval(() => {
+        const currentTime = timerState.elapsedTime;
+        const timeToSync = currentTime - lastSyncTime;
+        
+        if (timeToSync > 0) {
+          syncToDatabase(timeToSync);
+          setLastSyncTime(currentTime);
+        }
+      }, 30000); // Sync every 30 seconds
+    } else {
+      if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+        syncIntervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (syncIntervalRef.current) {
+        clearInterval(syncIntervalRef.current);
+      }
+    };
+  }, [timerState.isRunning, timerState.elapsedTime, lastSyncTime, user]);
+
   const startTimer = () => {
     setTimerState(prev => ({
       ...prev,
@@ -73,7 +155,14 @@ export default function Home() {
     }));
   };
 
-  const stopTimer = () => {
+  const stopTimer = async () => {
+    // Sync remaining time to database before stopping
+    if (user && timerState.elapsedTime > lastSyncTime) {
+      const timeToSync = timerState.elapsedTime - lastSyncTime;
+      await syncToDatabase(timeToSync);
+      setLastSyncTime(timerState.elapsedTime);
+    }
+    
     setTimerState(prev => ({
       ...prev,
       isRunning: false,
@@ -81,12 +170,19 @@ export default function Home() {
     }));
   };
 
-  const resetTimer = () => {
+  const resetTimer = async () => {
+    // Sync remaining time to database before resetting
+    if (user && timerState.elapsedTime > lastSyncTime) {
+      const timeToSync = timerState.elapsedTime - lastSyncTime;
+      await syncToDatabase(timeToSync);
+    }
+    
     setTimerState({
       startTime: null,
       elapsedTime: 0,
       isRunning: false,
     });
+    setLastSyncTime(0);
   };
 
   const formatTime = (milliseconds: number): string => {
@@ -119,8 +215,11 @@ export default function Home() {
         <div className="text-6xl font-mono font-bold text-blue-600 mb-4">
           {formatTime(timerState.elapsedTime)}
         </div>
-        <p className="text-gray-600 mb-8">
+        <p className="text-gray-600 mb-2">
           {timerState.isRunning ? 'Currently doomscrolling...' : 'Time how long you are doomscrolling for'}
+        </p>
+        <p className="text-sm text-gray-500 mb-8">
+          Current session • {user && dailyStats ? `Daily total: ${formatTime(dailyStats.total_time_ms + (timerState.elapsedTime - lastSyncTime))}` : 'Sign in to track daily totals'}
         </p>
         
         {shouldShowMileMessage() && (
@@ -166,7 +265,7 @@ export default function Home() {
 
       {timerState.elapsedTime > 0 && (
         <div className="mt-8 text-sm text-gray-500">
-          Timer automatically saves to local storage
+          {user ? 'Session saves locally • Daily totals sync to your account' : 'Timer saves locally • Sign in to track daily totals'}
         </div>
       )}
     </main>
